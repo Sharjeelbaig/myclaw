@@ -1,17 +1,21 @@
 import os
+from pathlib import Path
 
-from deepagents import create_deep_agent, backends
+from deepagents import create_deep_agent
 from langchain_core.messages import AIMessageChunk
 from langchain_ollama import ChatOllama
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.store.memory import InMemoryStore
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.panel import Panel
 
+from backend.docker_sandbox import DockerSandboxBackend
 from tools.python_executor import python_executor
 from agents.guard import GroundingGuardMiddleware
-from agents.planner.agent import create_planner_subagent
-from config import WORKSPACE_ROOT
+from agents.registry import get_all_subagents
+from config import PROJECT_ROOT, WORKSPACE_ROOT
 
 console = Console()
 
@@ -19,13 +23,12 @@ console = Console()
 #   AGENT_MODEL=gemma4:e2b-it-qat uv run ./src/main.py
 MODEL_NAME = os.getenv("AGENT_MODEL", "gemma4:e2b-it-qat")
 WORKSPACE_MOUNT = "/workspace/"
+SKILLS_DIR = PROJECT_ROOT / ".agents" / "skills"
 
-backend = backends.CompositeBackend(
-    default=backends.StateBackend(),
-    routes={
-        WORKSPACE_MOUNT: backends.FilesystemBackend(root_dir=str(WORKSPACE_ROOT)),
-    },
-)
+# Docker sandbox backend isolates bash & shell command execution in a container
+# while mounting the host workspace directory (defaults to tmp/).
+backend = DockerSandboxBackend(root_dir=str(WORKSPACE_ROOT))
+
 model = ChatOllama(
     model=MODEL_NAME,
     temperature=0,
@@ -34,16 +37,22 @@ model = ChatOllama(
     reasoning=True,
 )
 
+# Load skills progressively from .agents/skills
+skills_paths = [str(SKILLS_DIR)] if SKILLS_DIR.exists() else None
+
+# Auto-discover all subagents registered in src/agents/
+subagents = get_all_subagents(model)
+
 agent = create_deep_agent(
     model=model,
     checkpointer=MemorySaver(),
+    store=InMemoryStore(),
     backend=backend,
+    skills=skills_paths,
     tools=[
         python_executor,
     ],
-    subagents=[
-        create_planner_subagent(model),
-    ],
+    subagents=subagents,
     middleware=[
         GroundingGuardMiddleware(workspace_path=WORKSPACE_MOUNT),
     ],
@@ -77,7 +86,18 @@ def _tool_names(chunk) -> list[str]:
     return names
 
 
-console.print(f"[dim]model: {MODEL_NAME}   (swap with AGENT_MODEL=...)[/dim]\n")
+skills_count = len([d for d in SKILLS_DIR.iterdir() if d.is_dir()]) if SKILLS_DIR.exists() else 0
+subagent_names = [s["name"] for s in subagents]
+
+banner = (
+    f"[bold cyan]Deep Agent Console[/bold cyan] (Claude Code Comparable)\n"
+    f"[dim]Model:[/dim] [yellow]{MODEL_NAME}[/yellow]   "
+    f"[dim]Workspace:[/dim] [green]{WORKSPACE_ROOT}[/green]   "
+    f"[dim]Docker Sandbox:[/dim] [cyan]{backend.docker_image}[/cyan]\n"
+    f"[dim]Skills loaded:[/dim] [bold]{skills_count}[/bold] skills in .agents/skills/   "
+    f"[dim]Subagents:[/dim] [magenta]{', '.join(subagent_names) or 'None'}[/magenta]"
+)
+console.print(Panel(banner, border_style="cyan"))
 
 while True:
     try:

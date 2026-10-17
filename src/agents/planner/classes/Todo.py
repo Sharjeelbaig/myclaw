@@ -1,11 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from .Task import Task
 
 class Todo(BaseModel):
     todo_id: str
     title: str
     description: str
-    tasks: list[Task] = []
+    tasks: list[Task] = Field(default_factory=list)
 
     def add_task(self, task: Task):
         self.tasks.append(task)

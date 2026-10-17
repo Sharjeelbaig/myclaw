@@ -1,12 +1,12 @@
-from langchain.tools import tool, ToolRuntime
+from langchain.tools import tool
 
 from agents.planner.store import load_todos
 
 
 @tool
-def renderTodoBoard(runtime: ToolRuntime) -> str:
+def renderTodoBoard() -> str:
     """Render the current todo board as markdown."""
-    todos = load_todos(runtime)
+    todos = load_todos()
     if not todos:
         return "No todos yet."
 
